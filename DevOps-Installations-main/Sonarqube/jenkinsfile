@@ -1,0 +1,18 @@
+pipeline {
+    agent any
+    environment {
+        SONAR_HOST_URL = "ec2ipaddress:9000"
+        SONAR_AUTH_TOKEN = credentials('sonarqube-token')
+    }
+    stages {
+        stage("scan") {
+            steps {
+                script {
+                    withSonarQubeEnv('sonarqube9.9.3') {
+                        sh "mvn clean install sonar:sonar -Dsonar.projectKey=Jenkins-maven -Dsonar.host.url=http://13.233.143.177:9000 -Dsonar.login=${SONAR_AUTH_TOKEN}"
+                    }
+                }
+            }
+        }
+    }
+}

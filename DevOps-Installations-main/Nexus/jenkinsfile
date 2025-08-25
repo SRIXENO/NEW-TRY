@@ -1,0 +1,9 @@
+pipeline {
+    agent any
+    stages {
+        stage("nexus_artifact_upload") {
+            steps {
+                nexusArtifactUploader artifacts: [[artifactId: 'WebApp', classifier: '', file: 'target/WebApp.war', type: '.war']], credentialsId: 'nexus-credentials',
+            }
+        }
+    }
