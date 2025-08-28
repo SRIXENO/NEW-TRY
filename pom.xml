@@ -1,0 +1,16 @@
+<!-- pom.xml -->
+<project>
+  ...
+  <version>1.0.0-SNAPSHOT</version> <!-- use -SNAPSHOT to deploy to snapshots -->
+  <distributionManagement>
+    <repository>
+      <id>nexus</id>
+      <url>http://<NEXUS_IP>:8081/repository/maven-releases/</url>
+    </repository>
+    <snapshotRepository>
+      <id>nexus</id>
+      <url>http://<NEXUS_IP>:8081/repository/maven-snapshots/</url>
+    </snapshotRepository>
+  </distributionManagement>
+  ...
+</project>
