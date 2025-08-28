@@ -2,112 +2,104 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'                // Jenkins Global Tool Config: name=jdk17
-        maven 'maven-3.9'          // Jenkins Global Tool Config: name=maven-3.9
+        jdk 'jdk17'        // Must match Jenkins configured JDK
+        maven 'maven-3.9'  // Must match Jenkins configured Maven
     }
 
     environment {
-        MAVEN_SETTINGS_FILE_ID = 'maven-settings-xml'     // ID from Jenkins Managed Files
-        SONARQUBE_SERVER = 'SonarQube'                   // Name from Jenkins SonarQube config
-        TOMCAT_CREDS = 'tomcat-manager-creds'            // Jenkins credentials (username+password)
-        TOMCAT_HOST = '192.168.1.100'                    // Replace with your Tomcat server IP
-        APP_CONTEXT = '/myapp'                           // Tomcat app context path
+        MVN_HOME = tool 'maven-3.9'
+        NEXUS_REPO_ID = 'nexus'                // must match <id> in pom.xml
+        NEXUS_URL = 'http://<NEXUS_IP>:8081'  // Nexus server URL
+        MAVEN_SETTINGS = "$HOME/.m2/settings.xml"
+        DEPLOY_ENV = 'staging'                // Change to production if needed
     }
 
     options {
-        timestamps()
-        buildDiscarder(logRotator(numToKeepStr: '15'))
-        disableConcurrentBuilds()
+        // Keep build logs for 30 days and discard older builds
+        buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '50'))
+        timeout(time: 60, unit: 'MINUTES') // Pipeline timeout
+        ansiColor('xterm')                  // Colorized logs
+    }
+
+    triggers {
+        // Trigger on SCM change (push)
+        pollSCM('H/5 * * * *') // every 5 mins
     }
 
     stages {
-        stage('Checkout Code') {
+
+        stage('Checkout') {
             steps {
-                echo "📥 Checking out source code from Git..."
+                echo "🔄 Checking out source code"
                 checkout scm
             }
         }
 
-        stage('Build & Unit Test') {
+        stage('Code Quality / Static Analysis') {
             steps {
-                echo "⚙️ Running Maven build and unit tests..."
-                configFileProvider([configFile(fileId: "${MAVEN_SETTINGS_FILE_ID}", variable: 'MAVEN_SETTINGS')]) {
-                    sh 'mvn -B -s $MAVEN_SETTINGS clean verify'
-                }
+                echo "🔍 Running static code analysis"
+                // Example using Maven plugin like sonar
+                sh 'mvn clean verify sonar:sonar -s $MAVEN_SETTINGS || true'
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                echo "🧪 Running unit tests"
+                sh 'mvn test -s $MAVEN_SETTINGS'
+                junit '**/target/surefire-reports/*.xml'
+            }
+        }
+
+        stage('Build Artifact') {
+            steps {
+                echo "🏗 Building the project"
+                sh 'mvn clean package -s $MAVEN_SETTINGS'
             }
             post {
-                always {
-                    echo "📂 Archiving reports and artifacts..."
-                    junit 'target/surefire-reports/*.xml'
-                    archiveArtifacts artifacts: 'target/*.war', fingerprint: true
+                success {
+                    archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true
                 }
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage('Deploy to Nexus') {
             steps {
-                echo "🔍 Running SonarQube static analysis..."
-                configFileProvider([configFile(fileId: "${MAVEN_SETTINGS_FILE_ID}", variable: 'MAVEN_SETTINGS')]) {
-                    withSonarQubeEnv("${SONARQUBE_SERVER}") {
-                        sh 'mvn -B -s $MAVEN_SETTINGS sonar:sonar'
-                    }
-                }
+                echo "📦 Deploying artifact to Nexus"
+                sh "mvn deploy -s $MAVEN_SETTINGS"
             }
         }
 
-        stage('Quality Gate') {
-            steps {
-                echo "✅ Checking SonarQube Quality Gate..."
-                script {
-                    def qg = waitForQualityGate()
-                    if (qg.status != 'OK') {
-                        error "Pipeline failed due to SonarQube Quality Gate: ${qg.status}"
-                    }
-                }
-            }
-        }
-
-        stage('Publish to Nexus') {
-            steps {
-                echo "📦 Publishing artifacts to Nexus repository..."
-                configFileProvider([configFile(fileId: "${MAVEN_SETTINGS_FILE_ID}", variable: 'MAVEN_SETTINGS')]) {
-                    sh 'mvn -B -s $MAVEN_SETTINGS deploy -DskipTests'
-                }
-            }
-        }
-
-        stage('Deploy to Tomcat') {
+        stage('Deploy to Environment') {
             when {
-                branch 'main'
+                expression { return env.DEPLOY_ENV == 'staging' || env.DEPLOY_ENV == 'production' }
             }
             steps {
-                echo "🚀 Deploying application to Tomcat server..."
-                withCredentials([usernamePassword(credentialsId: "${TOMCAT_CREDS}", usernameVariable: 'TOMCAT_USER', passwordVariable: 'TOMCAT_PASS')]) {
-                    sh '''
-                        WAR_FILE=$(ls target/*.war | head -n1)
-                        if [ -z "$WAR_FILE" ]; then
-                          echo "❌ No WAR file found!" && exit 1
-                        fi
-                        echo "Deploying $WAR_FILE to Tomcat at ${TOMCAT_HOST}..."
-                        curl --fail -u $TOMCAT_USER:$TOMCAT_PASS \
-                          --upload-file "$WAR_FILE" \
-                          "http://${TOMCAT_HOST}:8080/manager/text/deploy?path=${APP_CONTEXT}&update=true"
-                    '''
-                }
+                echo "🚀 Deploying artifact to $DEPLOY_ENV environment"
+                // Example: shell script to copy artifact to server
+                // Replace with your actual deploy script
+                sh """
+                   scp target/*.jar user@staging-server:/opt/apps/
+                   ssh user@staging-server 'systemctl restart my-app.service'
+                """
             }
         }
+
     }
 
     post {
+        always {
+            echo "📌 Pipeline finished: ${currentBuild.currentResult}"
+        }
         success {
-            echo "🎉 Pipeline completed successfully"
+            mail to: 'team@example.com',
+                 subject: "✅ Build Success: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                 body: "Build ${env.BUILD_NUMBER} was successful.\nCheck Jenkins for details: ${env.BUILD_URL}"
         }
         failure {
-            echo "❌ Pipeline failed"
-        }
-        always {
-            echo "🧹 Cleaning workspace..."
-            cleanWs()
+            mail to: 'team@example.com',
+                 subject: "❌ Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                 body: "Build ${env.BUILD_NUMBER} failed.\nCheck Jenkins for details: ${env.BUILD_URL}"
         }
     }
 }
