@@ -2,11 +2,8 @@ pipeline {
     agent any
     stages {
         stage('Build') {
-            steps {
-                // Apply ansiColor to the steps within this stage.
-                ansiColor('xterm') {
-                    sh 'echo "Starting the build process..."'
-                    sh 'echo "Simulating a successful build."'
+    steps {
+        sh 'docker build -t $REPO_NAME:$IMAGE_TAG .'
                 }
             }
         }
@@ -25,4 +22,3 @@ pipeline {
             }
         }
     }
-}
